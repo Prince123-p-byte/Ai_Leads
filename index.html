@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Lead Finder</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons for UI elements - Corrected URL -->
+    <script src="https://unpkg.com/lucide@0.378.0/dist/lucide.min.js"></script>
+    <style>
+        /* Basic styles for a dark theme and custom animations */
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        
+        .animate-slide-in-up {
+            animation: slide-in-up 0.5s ease-out forwards;
+        }
+        @keyframes slide-in-up {
+            from {
+                transform: translateY(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 h-full">
+
+    <!-- This is the main container where the app will be rendered -->
+    <div id="app-root" class="h-full">
+        <!-- Initial loading state -->
+        <div class="flex items-center justify-center h-screen bg-gray-900">
+            <div class="animate-spin rounded-full h-32 w-32 border-t-2 border-b-2 border-purple-500"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import Firebase modules from the CDN
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-app.js";
+        import { 
+            getAuth, 
+            onAuthStateChanged, 
+            createUserWithEmailAndPassword, 
+            signInWithEmailAndPassword, 
+            signOut, 
+            FacebookAuthProvider, 
+            TwitterAuthProvider, 
+            signInWithPopup, 
+            getAdditionalUserInfo 
+        } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-auth.js";
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            onSnapshot, 
+            setDoc, 
+            deleteDoc, 
+            query 
+        } from "https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore.js";
+
+        // --- Firebase Configuration ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBDgrNq-P4J8ODIpYZtrFI9xelfyfvL_3Q",
+            authDomain: "ai-leads-81cee.firebaseapp.com",
+            projectId: "ai-leads-81cee",
+            storageBucket: "ai-leads-81cee.firebasestorage.app",
+            messagingSenderId: "200572302163",
+            appId: "1:200572302163:web:7d53e57846e29327cca7a6"
+        };
+        const appId = 'social-lead-finder'; // App specific identifier for Firestore
+
+        // --- Initialize Firebase ---
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- Mock Data ---
+        const mockMatchedPosts = [
+          { id: 1, platform: 'Twitter', user: '@designseekr', content: "Anyone know a good graphic designer for a startup logo? #graphicdesign #logo", timestamp: "2h ago", avatar: `https://placehold.co/40x40/7C3AED/FFFFFF?text=D` },
+          { id: 2, platform: 'Facebook', user: 'Jane Doe', content: "Our marketing team is looking for a freelance video editor for a new campaign. Please send portfolios!", timestamp: "5h ago", avatar: `https://placehold.co/40x40/1D4ED8/FFFFFF?text=J` },
+          { id: 3, platform: 'Instagram', user: 'photo_pro', content: "Just finished a shoot and now I need a talented photo editor to help with post-production. DM me!", timestamp: "1d ago", avatar: `https://placehold.co/40x40/D97706/FFFFFF?text=P` },
+        ];
+        
+        // --- Application State ---
+        let state = {
+            user: null,
+            currentPage: 'dashboard',
+            isSidebarOpen: false,
+            notification: null,
+        };
+
+        // --- Main App Root Element ---
+        const appRoot = document.getElementById('app-root');
+        
+        // --- Safe Icon Creation ---
+        // This function ensures lucide icons are only created when the library is ready.
+        function createIconsSafe() {
+            if (window.lucide) {
+                window.lucide.createIcons();
+            }
+        }
+
+        // --- Notification System ---
+        function setNotification(notification) {
+            state.notification = notification;
+            render(); // Re-render to show/hide notification
+        }
+
+        const renderNotification = () => {
+            if (!state.notification) return '';
+
+            const { type, message } = state.notification;
+            const isError = type === 'error';
+            const bgColor = isError ? 'bg-red-600' : 'bg-green-600';
+            const icon = isError ? 'alert-circle' : 'check-circle';
+            
+            // Auto-dismiss notification
+            setTimeout(() => {
+                const notifElement = document.getElementById('notification-popup');
+                if (notifElement) {
+                   notifElement.remove();
+                   state.notification = null;
+                }
+            }, 5000);
+
+            return `
+                <div id="notification-popup" class="fixed bottom-5 right-5 w-11/12 max-w-sm p-4 rounded-lg shadow-2xl text-white z-50 animate-slide-in-up ${bgColor}" role="alert">
+                  <div class="flex items-start">
+                    <div class="flex-shrink-0 pt-0.5">
+                      <i data-lucide="${icon}" class="h-6 w-6"></i>
+                    </div>
+                    <div class="ml-3 flex-1">
+                      <p class="text-sm font-medium leading-5">${message}</p>
+                    </div>
+                    <div class="ml-4 flex-shrink-0 flex">
+                      <button id="close-notification-btn" class="inline-flex rounded-md text-white/80 hover:text-white focus:outline-none">
+                        <span class="sr-only">Close</span>
+                        <i data-lucide="x" class="h-5 w-5"></i>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+            `;
+        };
+
+        // --- Render Functions for "Pages" ---
+        const renderDashboard = () => {
+            let filter = 'All';
+            const filters = ['All', 'Facebook', 'Twitter', 'Instagram'];
+            const getPlatformIcon = (platform) => {
+                switch(platform) {
+                    case 'Twitter': return `<i data-lucide="twitter" class="w-5 h-5 text-sky-400"></i>`;
+                    case 'Facebook': return `<i data-lucide="facebook" class="w-5 h-5 text-blue-500"></i>`;
+                    case 'Instagram': return `<i data-lucide="instagram" class="w-5 h-5 text-pink-500"></i>`;
+                    default: return '';
+                }
+            };
+
+            const filteredPosts = filter === 'All' ? mockMatchedPosts : mockMatchedPosts.filter(p => p.platform === filter);
+            
+            const postsHtml = filteredPosts.length > 0 ? filteredPosts.map(post => `
+              <li class="p-4 sm:p-6 hover:bg-gray-700/50 transition-colors duration-200">
+                <div class="flex items-start space-x-4">
+                  <img src="${post.avatar}" alt="User Avatar" class="w-12 h-12 rounded-full border-2 border-gray-600" />
+                  <div class="flex-1">
+                    <div class="flex justify-between items-center">
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold text-white">${post.user}</span>
+                        <span class="text-gray-500 text-sm">· ${post.timestamp}</span>
+                      </div>
+                      <span class="flex items-center gap-2 text-sm text-gray-400">
+                        ${getPlatformIcon(post.platform)}
+                        ${post.platform}
+                      </span>
+                    </div>
+                    <p class="text-gray-300 mt-2">${post.content}</p>
+                  </div>
+                </div>
+              </li>
+            `).join('') : `<p class="text-center text-gray-400 p-8">No matching posts found for this filter.</p>`;
+
+            return `
+                <div class="space-y-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                            <h2 class="text-3xl font-bold text-white">Matched Posts</h2>
+                            <p class="text-gray-400 mt-1">Latest opportunities based on your keywords.</p>
+                        </div>
+                        <div id="dashboard-filters" class="flex items-center bg-gray-800 rounded-full p-1 border border-gray-700">
+                           ${filters.map(f => `<button data-filter="${f}" class="filter-btn px-4 py-2 text-sm font-semibold rounded-full transition-colors ${filter === f ? 'bg-purple-600 text-white' : 'text-gray-300 hover:text-white'}">${f}</button>`).join('')}
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 rounded-2xl shadow-lg border border-gray-700/50">
+                        <ul id="posts-list" class="divide-y divide-gray-700/50">
+                           ${postsHtml}
+                        </ul>
+                    </div>
+                </div>
+            `;
+        };
+        
+        // Keywords page requires async data, so it manages its own rendering.
+        const renderKeywords = (mainContentEl) => {
+            mainContentEl.innerHTML = `
+                <div class="space-y-6">
+                    <div>
+                      <h2 class="text-3xl font-bold text-white">Manage Keywords</h2>
+                      <p class="text-gray-400 mt-1">Add or remove keywords to track.</p>
+                    </div>
+                    <div class="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700/50">
+                      <form id="add-keyword-form" class="flex flex-col sm:flex-row gap-4">
+                          <input id="new-keyword-input" type="text" placeholder="e.g. 'graphic designer needed'" class="flex-grow bg-gray-700/80 border-2 border-gray-600 focus:border-purple-500 focus:ring-purple-500 rounded-lg py-3 px-4 text-white placeholder-gray-400 transition" />
+                          <button type="submit" class="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg transition-colors"><i data-lucide="plus" class="w-5 h-5"></i> Add Keyword</button>
+                      </form>
+                    </div>
+                    <div id="keywords-container" class="bg-gray-800 rounded-2xl shadow-lg border border-gray-700/50 p-6">
+                       <p class="text-gray-400">Loading keywords...</p>
+                    </div>
+                </div>`;
+            
+            const keywordsContainer = document.getElementById('keywords-container');
+            const keywordsCollectionRef = collection(db, 'artifacts', appId, 'users', state.user.uid, 'keywords');
+
+            onSnapshot(query(keywordsCollectionRef), (snapshot) => {
+                const keywordsData = [];
+                snapshot.forEach(doc => keywordsData.push({ id: doc.id, ...doc.data() }));
+
+                if(keywordsData.length > 0) {
+                    keywordsContainer.innerHTML = `
+                        <h3 class="text-xl font-bold text-white mb-4">Your Keywords</h3>
+                        <div class="flex flex-wrap gap-4">
+                            ${keywordsData.map(kw => `
+                                <div class="bg-gray-700 rounded-full py-2 px-4 flex items-center justify-between gap-3 group">
+                                    <span class="text-white font-medium">${kw.text}</span>
+                                    <button class="delete-keyword-btn text-gray-500 hover:text-red-500 opacity-50 group-hover:opacity-100 transition-opacity" data-id="${kw.id}"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                } else {
+                    keywordsContainer.innerHTML = `
+                         <div class="text-center py-8">
+                            <p class="text-gray-400">You haven't added any keywords yet.</p>
+                            <p class="text-gray-500 text-sm">Add one above to start tracking!</p>
+                         </div>`;
+                }
+                createIconsSafe(); // Re-render icons
+            });
+
+            document.getElementById('add-keyword-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const input = document.getElementById('new-keyword-input');
+                const keywordToAdd = input.value.trim().toLowerCase();
+                if (!keywordToAdd) return;
+                input.value = '';
+                try {
+                   await setDoc(doc(keywordsCollectionRef, keywordToAdd), { text: keywordToAdd, addedAt: new Date() });
+                   setNotification({ type: 'success', message: `Keyword "${keywordToAdd}" added.`});
+                } catch(err) {
+                   setNotification({ type: 'error', message: "Failed to add keyword."});
+                }
+            });
+        };
+        
+        // Accounts page also needs async data.
+        const renderAccounts = (mainContentEl) => {
+             const supportedPlatforms = [
+                { id: 'facebook.com', name: 'Facebook', icon: 'facebook', color: 'text-blue-500', provider: new FacebookAuthProvider() },
+                { id: 'twitter.com', name: 'X (Twitter)', icon: 'twitter', color: 'text-sky-400', provider: new TwitterAuthProvider() },
+                { id: 'instagram.com', name: 'Instagram', icon: 'instagram', color: 'text-pink-500', provider: null, note: 'Instagram connection is managed via Facebook.' },
+                { id: 'linkedin.com', name: 'LinkedIn', icon: 'linkedin', color: 'text-blue-700', provider: null, note: 'LinkedIn connection coming soon.' }
+            ];
+
+            mainContentEl.innerHTML = `
+                <div class="space-y-6">
+                    <div>
+                        <h2 class="text-3xl font-bold text-white">Connected Accounts</h2>
+                        <p class="text-gray-400 mt-1">Connect social accounts to start tracking.</p>
+                    </div>
+                    <div id="accounts-container" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <p class="text-gray-400">Loading accounts...</p>
+                    </div>
+                </div>`;
+
+            const accountsContainer = document.getElementById('accounts-container');
+            const accountsCollectionRef = collection(db, 'artifacts', appId, 'users', state.user.uid, 'connectedAccounts');
+
+            onSnapshot(query(accountsCollectionRef), (snapshot) => {
+                const connectedAccounts = {};
+                snapshot.forEach(doc => connectedAccounts[doc.id] = doc.data());
+
+                accountsContainer.innerHTML = supportedPlatforms.map(platform => {
+                    const account = connectedAccounts[platform.id];
+                    const isConnected = !!account;
+                    const buttonText = isConnected ? 'Disconnect' : 'Connect';
+                    const buttonColor = isConnected ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700';
+
+                    return `
+                        <div class="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700/50 flex flex-col justify-between">
+                            <div class="flex items-center gap-4">
+                                <i data-lucide="${platform.icon}" class="w-10 h-10 ${platform.color}"></i>
+                                <div>
+                                    <h3 class="text-xl font-bold text-white">${platform.name}</h3>
+                                    ${isConnected ? `
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <i data-lucide="check-circle" class="w-4 h-4 text-green-400"></i>
+                                        <p class="text-green-400 text-sm truncate">Connected as ${account.username}</p>
+                                    </div>` : `
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <i data-lucide="alert-circle" class="w-4 h-4 text-gray-400"></i>
+                                        <p class="text-gray-400 text-sm">Not Connected</p>
+                                    </div>`}
+                                </div>
+                            </div>
+                            <div class="mt-4 pt-4 border-t border-gray-700/50">
+                                ${platform.provider ? `
+                                <button data-platform-id="${platform.id}" class="connect-btn w-full font-bold py-2 px-4 rounded-lg transition-colors ${buttonColor} text-white">
+                                    ${buttonText}
+                                </button>
+                                ` : `<p class="text-xs text-gray-500 text-center italic mt-2">${platform.note}</p>`}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                accountsContainer.querySelectorAll('.connect-btn').forEach(button => {
+                    button.addEventListener('click', async () => {
+                        const platformId = button.dataset.platformId;
+                        const platform = supportedPlatforms.find(p => p.id === platformId);
+                        const isConnected = !!connectedAccounts[platformId];
+                        if (isConnected) {
+                            try {
+                                await deleteDoc(doc(accountsCollectionRef, platformId));
+                                setNotification({type: 'success', message: `Disconnected ${platform.name}.`});
+                            } catch (err) { setNotification({type: 'error', message: 'Failed to disconnect.'}); }
+                        } else {
+                             try {
+                                const result = await signInWithPopup(auth, platform.provider);
+                                const accountDocRef = doc(accountsCollectionRef, platform.id);
+                                await setDoc(accountDocRef, {
+                                    providerId: platform.id,
+                                    username: getAdditionalUserInfo(result)?.profile.screen_name || getAdditionalUserInfo(result)?.profile.name,
+                                    displayName: result.user.displayName,
+                                    photoURL: result.user.photoURL,
+                                    connectedAt: new Date()
+                                });
+                                setNotification({ type: 'success', message: `Successfully connected ${platform.name}!`});
+                            } catch (error) {
+                                let errorMessage = `Could not connect to ${platform.name}.`;
+                                if (error.code === 'auth/unauthorized-domain') {
+                                    errorMessage = `Connection failed. You must add this app's domain to the "Authorized domains" in your Firebase project Authentication settings.`;
+                                } else if (error.code === 'auth/popup-closed-by-user') {
+                                    errorMessage = `Connection cancelled.`;
+                                }
+                                setNotification({ type: 'error', message: errorMessage });
+                            }
+                        }
+                    });
+                });
+
+                createIconsSafe();
+            });
+        };
+
+        const renderSettings = () => {
+             return `
+                <div class="space-y-8">
+                  <div>
+                    <h2 class="text-3xl font-bold text-white">Settings</h2>
+                    <p class="text-gray-400 mt-1">Customize your app experience.</p>
+                  </div>
+                  <div class="bg-gray-800 rounded-2xl shadow-lg border border-gray-700/50 divide-y divide-gray-700/50">
+                      <div class="p-6">
+                          <h3 class="text-xl font-bold text-white">Account</h3>
+                           <div class="mt-4 space-y-4">
+                              <div class="flex justify-between items-center">
+                                  <span class="text-gray-300">Email</span>
+                                  <span class="text-white font-medium">${state.user.email}</span>
+                              </div>
+                              <div class="flex justify-between items-center">
+                                  <span class="text-gray-300">Subscription</span>
+                                  <span class="text-purple-400 font-medium">Pro Plan</span>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+                </div>`;
+        };
+        
+        const renderAuthPage = () => {
+            return `
+             <div class="flex items-center justify-center min-h-screen bg-gray-900 p-4">
+                <div class="w-full max-w-md p-8 space-y-6 bg-gray-800 rounded-2xl shadow-2xl">
+                    <div id="auth-form-container">
+                        <!-- Login form will be rendered here -->
+                    </div>
+                </div>
+            </div>`;
+        };
+
+        const renderLoginForm = (isLogin = true) => {
+            const container = document.getElementById('auth-form-container');
+            if (!container) return;
+            container.innerHTML = `
+                <div class="text-center">
+                    <h1 class="text-4xl font-bold text-white tracking-tight">
+                        ${isLogin ? 'Welcome Back' : 'Create Account'}
+                    </h1>
+                    <p class="mt-2 text-gray-400">
+                        ${isLogin ? 'Sign in to find your next opportunity.' : 'Get started with Social Lead Finder.'}
+                    </p>
+                </div>
+                <form id="auth-form" class="space-y-6 mt-6">
+                    <div class="relative">
+                        <i data-lucide="mail" class="w-5 h-5 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                        <input id="email-input" type="email" placeholder="Email address" required class="w-full bg-gray-700/80 border-2 border-gray-600 focus:border-purple-500 focus:ring-purple-500 rounded-lg py-3 px-4 pl-12 text-white placeholder-gray-400 transition" />
+                    </div>
+                    <div class="relative">
+                        <i data-lucide="lock" class="w-5 h-5 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                        <input id="password-input" type="password" placeholder="Password" required class="w-full bg-gray-700/80 border-2 border-gray-600 focus:border-purple-500 focus:ring-purple-500 rounded-lg py-3 px-4 pl-12 text-white placeholder-gray-400 transition" />
+                    </div>
+                    <button type="submit" class="w-full flex items-center justify-center gap-3 py-3 px-4 bg-purple-600 hover:bg-purple-700 rounded-lg text-white font-semibold transition-all duration-300">
+                        ${isLogin ? 'Log In' : 'Sign Up'}
+                    </button>
+                </form>
+                <div class="text-center mt-6">
+                    <button id="toggle-auth-mode" class="text-sm text-purple-400 hover:text-purple-300">
+                        ${isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Log In'}
+                    </button>
+                </div>
+            `;
+            createIconsSafe();
+            
+            document.getElementById('toggle-auth-mode').addEventListener('click', () => renderLoginForm(!isLogin));
+            document.getElementById('auth-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const email = document.getElementById('email-input').value;
+                const password = document.getElementById('password-input').value;
+                try {
+                    if (isLogin) {
+                        await signInWithEmailAndPassword(auth, email, password);
+                    } else {
+                        await createUserWithEmailAndPassword(auth, email, password);
+                    }
+                } catch(error) {
+                    setNotification({type: 'error', message: error.message.replace('Firebase: ', '')});
+                }
+            });
+        };
+
+        // --- Main Render Function ---
+        const render = () => {
+            if (!state.user) {
+                appRoot.innerHTML = renderAuthPage();
+                renderLoginForm();
+                return;
+            }
+
+            const navItems = [
+                { id: 'dashboard', icon: 'search', label: 'Dashboard' },
+                { id: 'keywords', icon: 'key', label: 'Keywords' },
+                { id: 'accounts', icon: 'user', label: 'Accounts' },
+                { id: 'settings', icon: 'settings', label: 'Settings' },
+            ];
+
+            const sidebarHtml = `
+                <div id="sidebar-overlay" class="fixed inset-0 bg-black bg-opacity-50 z-30 lg:hidden ${state.isSidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'} transition-opacity"></div>
+                <aside class="absolute lg:relative z-40 lg:z-auto w-64 bg-gray-800 border-r border-gray-700/50 flex-shrink-0 flex flex-col transition-transform duration-300 ease-in-out ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}">
+                    <div class="flex items-center justify-center h-20 border-b border-gray-700/50">
+                        <i data-lucide="shield" class="w-8 h-8 text-purple-400"></i>
+                        <span class="ml-3 text-2xl font-bold text-white tracking-wider">Leads AI</span>
+                    </div>
+                    <nav class="flex-1 px-4 py-6 space-y-2">
+                        ${navItems.map(item => `
+                            <button data-page="${item.id}" class="nav-btn w-full flex items-center px-4 py-3 text-lg rounded-lg transition-colors duration-200 ${state.currentPage === item.id ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}">
+                                <i data-lucide="${item.icon}" class="w-6 h-6 mr-4"></i>
+                                ${item.label}
+                            </button>
+                        `).join('')}
+                    </nav>
+                </aside>
+            `;
+            
+            const headerHtml = `
+                <header class="flex-shrink-0 bg-gray-800/50 backdrop-blur-sm border-b border-gray-700/50 flex items-center justify-between p-4 h-20">
+                  <button id="open-sidebar-btn" class="lg:hidden text-gray-300 hover:text-white">
+                    <i data-lucide="menu" class="w-6 h-6"></i>
+                  </button>
+                  <div class="hidden lg:block">
+                    <h1 class="text-2xl font-bold text-white capitalize">${state.currentPage}</h1>
+                    <p class="text-sm text-gray-400">Welcome back, ${state.user.email}</p>
+                  </div>
+                  <div class="flex items-center space-x-2 sm:space-x-4">
+                    <button id="logout-btn" class="text-gray-300 hover:text-white p-2 rounded-full hover:bg-gray-700">
+                        <i data-lucide="log-out" class="w-6 h-6"></i>
+                    </button>
+                    <img src="https://placehold.co/40x40/9333EA/FFFFFF?text=${state.user.email?.[0]?.toUpperCase() || 'U'}" alt="User Avatar" class="w-10 h-10 rounded-full border-2 border-purple-500" />
+                  </div>
+                </header>`;
+            
+            appRoot.innerHTML = `
+                <div class="flex h-screen bg-gray-900 text-gray-100 font-sans">
+                    ${sidebarHtml}
+                    <div class="flex-1 flex flex-col overflow-hidden">
+                        ${headerHtml}
+                        <main id="main-content" class="flex-1 overflow-x-hidden overflow-y-auto bg-gray-900 p-4 sm:p-6 lg:p-8"></main>
+                    </div>
+                </div>
+                ${renderNotification()}
+            `;
+            
+            // Render the content for the current page
+            const mainContentEl = document.getElementById('main-content');
+            switch (state.currentPage) {
+                case 'dashboard':
+                    mainContentEl.innerHTML = renderDashboard();
+                    break;
+                case 'keywords':
+                    renderKeywords(mainContentEl);
+                    break;
+                case 'accounts':
+                    renderAccounts(mainContentEl);
+                    break;
+                case 'settings':
+                    mainContentEl.innerHTML = renderSettings();
+                    break;
+            }
+
+            // Add event listeners after rendering
+            addEventListeners();
+            createIconsSafe();
+        };
+
+        // --- Event Listener Setup ---
+        const addEventListeners = () => {
+             // Notification close button
+            const closeBtn = document.getElementById('close-notification-btn');
+            if (closeBtn) {
+                closeBtn.addEventListener('click', () => setNotification(null));
+            }
+            // Logout
+            const logoutBtn = document.getElementById('logout-btn');
+            if(logoutBtn) logoutBtn.addEventListener('click', () => signOut(auth));
+            
+            // Sidebar toggles
+            const openSidebarBtn = document.getElementById('open-sidebar-btn');
+            if(openSidebarBtn) openSidebarBtn.addEventListener('click', () => {
+                state.isSidebarOpen = true;
+                render();
+            });
+
+            const sidebarOverlay = document.getElementById('sidebar-overlay');
+            if(sidebarOverlay) sidebarOverlay.addEventListener('click', () => {
+                state.isSidebarOpen = false;
+                render();
+            });
+            
+            // Navigation
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    state.currentPage = btn.dataset.page;
+                    state.isSidebarOpen = false;
+                    render();
+                });
+            });
+
+            // Page-specific listeners
+             if (state.currentPage === 'dashboard') {
+                document.querySelectorAll('.filter-btn').forEach(btn => {
+                   btn.addEventListener('click', (e) => {
+                       // This is a simple re-render for dashboard filter, more complex pages would need better logic
+                       console.log("Filtering by:", e.currentTarget.dataset.filter);
+                       // In a real app, you'd update state and re-render the list, but this mock is simple.
+                   });
+                });
+            } else if (state.currentPage === 'keywords') {
+                const mainContent = document.getElementById('main-content');
+                mainContent.addEventListener('click', async (e) => {
+                    const deleteBtn = e.target.closest('.delete-keyword-btn');
+                    if(deleteBtn) {
+                        const id = deleteBtn.dataset.id;
+                        try {
+                            const keywordsCollectionRef = collection(db, 'artifacts', appId, 'users', state.user.uid, 'keywords');
+                            await deleteDoc(doc(keywordsCollectionRef, id));
+                            setNotification({type: 'success', message: `Keyword "${id}" removed.`});
+                        } catch(err) {
+                            setNotification({type: 'error', message: "Failed to remove keyword."});
+                        }
+                    }
+                });
+            }
+        };
+
+        // --- Initial Load ---
+        onAuthStateChanged(auth, (user) => {
+            state.user = user;
+            render();
+        });
+    </script>
+</body>
+</html>
