@@ -80,7 +80,7 @@
             apiKey: "AIzaSyBDgrNq-P4J8ODIpYZtrFI9xelfyfvL_3Q",
             authDomain: "ai-leads-81cee.firebaseapp.com",
             projectId: "ai-leads-81cee",
-            storageBucket: "ai-leads-81cee.firebasestorage.app",
+            storageBucket: "ai-leads-81cee.appspot.com",
             messagingSenderId: "200572302163",
             appId: "1:200572302163:web:7d53e57846e29327cca7a6"
         };
@@ -398,8 +398,24 @@
                 accountsContainer.innerHTML = supportedPlatforms.map(platform => {
                     const account = connectedAccounts[platform.id];
                     const isConnected = !!account;
-                    const buttonText = isConnected ? 'Disconnect' : 'Connect';
-                    const buttonColor = isConnected ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700';
+
+                    let buttonHtml = '';
+                    if (isConnected) {
+                        buttonHtml = `
+                            <div class="flex items-center gap-2">
+                                <button data-platform-id="${platform.id}" class="extract-leads-btn flex-1 font-bold py-2 px-4 rounded-lg transition-colors bg-blue-600 hover:bg-blue-700 text-white text-sm">Extract Leads</button>
+                                <button data-platform-id="${platform.id}" class="connect-btn font-bold py-2 px-4 rounded-lg transition-colors bg-red-600 hover:bg-red-700 text-white text-sm">Disconnect</button>
+                            </div>
+                        `;
+                    } else if (platform.provider) {
+                        buttonHtml = `
+                            <button data-platform-id="${platform.id}" class="connect-btn w-full font-bold py-2 px-4 rounded-lg transition-colors bg-green-600 hover:bg-green-700 text-white">
+                                Connect
+                            </button>
+                        `;
+                    } else {
+                        buttonHtml = `<p class="text-xs text-gray-500 text-center italic mt-2">${platform.note}</p>`;
+                    }
 
                     return `
                         <div class="bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-700/50 flex flex-col justify-between">
@@ -419,11 +435,7 @@
                                 </div>
                             </div>
                             <div class="mt-4 pt-4 border-t border-gray-700/50">
-                                ${platform.provider ? `
-                                <button data-platform-id="${platform.id}" class="connect-btn w-full font-bold py-2 px-4 rounded-lg transition-colors ${buttonColor} text-white">
-                                    ${buttonText}
-                                </button>
-                                ` : `<p class="text-xs text-gray-500 text-center italic mt-2">${platform.note}</p>`}
+                                ${buttonHtml}
                             </div>
                         </div>
                     `;
@@ -463,6 +475,15 @@
                         }
                     });
                 });
+                
+                accountsContainer.querySelectorAll('.extract-leads-btn').forEach(button => {
+                    button.addEventListener('click', () => {
+                        const platformId = button.dataset.platformId;
+                        const platform = supportedPlatforms.find(p => p.id === platformId);
+                        setNotification({ type: 'success', message: `Starting to extract new leads from ${platform.name}...` });
+                    });
+                });
+
 
                 createIconsSafe();
             });
